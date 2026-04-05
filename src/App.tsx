@@ -5,8 +5,17 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { GoogleGenAI } from "@google/genai";
-import { Camera, Sparkles, RefreshCw, Download, Image as ImageIcon, Settings2, X } from 'lucide-react';
+import { Camera, Sparkles, RefreshCw, Download, Image as ImageIcon, Settings2, X, Play, Film, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+
+declare global {
+  interface Window {
+    aistudio: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
+}
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -20,6 +29,9 @@ export default function App() {
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [downloadFormat, setDownloadFormat] = useState<'png' | 'jpeg' | 'webp'>('png');
   const [showFormatMenu, setShowFormatMenu] = useState(false);
+  const [isVideoProcessing, setIsVideoProcessing] = useState(false);
+  const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -118,9 +130,109 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    checkApiKey();
+  }, []);
+
+  const checkApiKey = async () => {
+    if (window.aistudio) {
+      const hasKey = await window.aistudio.hasSelectedApiKey();
+      setHasApiKey(hasKey);
+    }
+  };
+
+  const handleOpenSelectKey = async () => {
+    if (window.aistudio) {
+      await window.aistudio.openSelectKey();
+      setHasApiKey(true);
+    }
+  };
+
+  const generateVideo = async () => {
+    if (!transformedImage && !capturedImage) return;
+    
+    if (!hasApiKey) {
+      await handleOpenSelectKey();
+    }
+
+    setIsVideoProcessing(true);
+    setError(null);
+    setGeneratedVideoUrl(null);
+
+    try {
+      const activeImage = transformedImage || capturedImage;
+      if (!activeImage) return;
+      
+      const base64Data = activeImage.split(',')[1];
+      const mimeType = activeImage.split(';')[0].split(':')[1];
+
+      const videoAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      
+      let operation = await videoAi.models.generateVideos({
+        model: 'veo-3.1-lite-generate-preview',
+        prompt: prompt || 'Dales movimiento natural y cinematográfico a los elementos de esta imagen.',
+        image: {
+          imageBytes: base64Data,
+          mimeType: mimeType,
+        },
+        config: {
+          numberOfVideos: 1,
+          resolution: '720p',
+          aspectRatio: '16:9'
+        }
+      });
+
+      // Poll for completion
+      while (!operation.done) {
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        operation = await videoAi.operations.getVideosOperation({ operation: operation });
+      }
+
+      const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+      if (downloadLink) {
+        const response = await fetch(downloadLink, {
+          method: 'GET',
+          headers: {
+            'x-goog-api-key': process.env.GEMINI_API_KEY || '',
+          },
+        });
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        setGeneratedVideoUrl(url);
+      } else {
+        setError("No se pudo generar el video. Intenta de nuevo.");
+      }
+    } catch (err: any) {
+      console.error("Video Generation error:", err);
+      const errorMsg = typeof err === 'string' ? err : JSON.stringify(err);
+      
+      if (errorMsg.includes("Requested entity was not found") || 
+          errorMsg.includes("permission") || 
+          errorMsg.includes("403") || 
+          errorMsg.includes("PERMISSION_DENIED")) {
+        setHasApiKey(false);
+        setError("La generación de video requiere una API Key de un proyecto con facturación habilitada (Paid Plan).");
+      } else {
+        setError("Error al generar el movimiento. Asegúrate de tener una API Key válida configurada.");
+      }
+    } finally {
+      setIsVideoProcessing(false);
+    }
+  };
+
+  const downloadVideo = () => {
+    if (generatedVideoUrl) {
+      const link = document.createElement('a');
+      link.href = generatedVideoUrl;
+      link.download = `vision-ai-motion-${Date.now()}.mp4`;
+      link.click();
+    }
+  };
+
   const reset = () => {
     setCapturedImage(null);
     setTransformedImage(null);
+    setGeneratedVideoUrl(null);
     setIsCameraActive(true);
     setPrompt('');
   };
@@ -240,43 +352,67 @@ export default function App() {
               </motion.div>
             )}
 
-            {transformedImage && (
+            {(transformedImage || generatedVideoUrl) && (
               <motion.div 
-                key="transformed"
+                key="result"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 className="absolute inset-0 flex flex-col"
               >
-                <img 
-                  src={transformedImage} 
-                  alt="Transformed" 
-                  className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
-                />
+                {generatedVideoUrl ? (
+                  <video 
+                    src={generatedVideoUrl} 
+                    autoPlay 
+                    loop 
+                    controls 
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <img 
+                    src={transformedImage!} 
+                    alt="Transformed" 
+                    className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                )}
+                
                 <div className="absolute bottom-6 left-0 right-0 flex flex-col items-center gap-3 px-6">
-                  <div className="flex gap-2 w-full max-w-md">
+                  <div className="flex flex-wrap gap-2 w-full max-w-md">
                     <button
                       onClick={reset}
-                      className="flex-1 bg-white/10 backdrop-blur-md hover:bg-white/20 text-white font-semibold py-3 px-6 rounded-xl transition-all flex items-center justify-center gap-2 border border-white/10"
+                      className="flex-1 min-w-[120px] bg-white/10 backdrop-blur-md hover:bg-white/20 text-white font-semibold py-3 px-4 rounded-xl transition-all flex items-center justify-center gap-2 border border-white/10"
                     >
                       <Camera className="w-5 h-5" />
-                      Nueva Foto
+                      Nueva
                     </button>
                     
-                    <div className="relative flex-1">
+                    {!generatedVideoUrl && (
                       <button
-                        onClick={downloadImage}
+                        onClick={generateVideo}
+                        disabled={isVideoProcessing}
+                        className="flex-1 min-w-[120px] bg-indigo-600/20 backdrop-blur-md hover:bg-indigo-600/30 text-indigo-400 font-semibold py-3 px-4 rounded-xl transition-all flex items-center justify-center gap-2 border border-indigo-500/30"
+                      >
+                        {isVideoProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Film className="w-5 h-5" />}
+                        {isVideoProcessing ? 'Generando...' : 'Dar Movimiento'}
+                      </button>
+                    )}
+
+                    <div className="relative flex-1 min-w-[160px]">
+                      <button
+                        onClick={generatedVideoUrl ? downloadVideo : downloadImage}
                         className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-3 px-6 rounded-l-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/20 border-r border-indigo-400/30"
                       >
                         <Download className="w-5 h-5" />
-                        Guardar .{downloadFormat}
+                        {generatedVideoUrl ? 'Bajar Video' : `Guardar .${downloadFormat}`}
                       </button>
-                      <button
-                        onClick={() => setShowFormatMenu(!showFormatMenu)}
-                        className="absolute right-[-40px] top-0 bottom-0 w-10 bg-indigo-700 hover:bg-indigo-600 text-white rounded-r-xl border-l border-indigo-400/30 flex items-center justify-center"
-                      >
-                        <Settings2 className="w-4 h-4" />
-                      </button>
+                      {!generatedVideoUrl && (
+                        <button
+                          onClick={() => setShowFormatMenu(!showFormatMenu)}
+                          className="absolute right-[-40px] top-0 bottom-0 w-10 bg-indigo-700 hover:bg-indigo-600 text-white rounded-r-xl border-l border-indigo-400/30 flex items-center justify-center"
+                        >
+                          <Settings2 className="w-4 h-4" />
+                        </button>
+                      )}
 
                       <AnimatePresence>
                         {showFormatMenu && (
@@ -310,9 +446,32 @@ export default function App() {
 
           {/* Error Message */}
           {error && (
-            <div className="absolute top-4 left-4 right-4 bg-red-500/90 backdrop-blur-md text-white p-3 rounded-xl text-sm flex items-center gap-2 border border-red-400/20">
-              <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
-              {error}
+            <div className="absolute top-4 left-4 right-4 bg-red-500/90 backdrop-blur-md text-white p-4 rounded-xl text-sm flex flex-col gap-3 border border-red-400/20 z-[60]">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
+                <span className="flex-1">{error}</span>
+                <button onClick={() => setError(null)} className="p-1 hover:bg-white/10 rounded">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              {error.includes("facturación") && (
+                <div className="flex gap-2">
+                  <button 
+                    onClick={handleOpenSelectKey}
+                    className="bg-white text-red-600 px-3 py-1.5 rounded-lg font-bold text-xs hover:bg-neutral-100 transition-colors"
+                  >
+                    Seleccionar API Key
+                  </button>
+                  <a 
+                    href="https://ai.google.dev/gemini-api/docs/billing" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="bg-red-600 text-white px-3 py-1.5 rounded-lg font-bold text-xs hover:bg-red-700 transition-colors border border-white/20"
+                  >
+                    Ver Documentación de Facturación
+                  </a>
+                </div>
+              )}
             </div>
           )}
 

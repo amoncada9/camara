@@ -1,0 +1,20 @@
+{
+  "short_name": "VisionAI",
+  "name": "VisionAI Morph",
+  "icons": [
+    {
+      "src": "https://picsum.photos/seed/visionai/192/192",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://picsum.photos/seed/visionai/512/512",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#4f46e5",
+  "background_color": "#0a0a0a"
+}
