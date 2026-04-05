@@ -1,0 +1,22 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply antialiased bg-neutral-950;
+  }
+}
+
+.aspect-video {
+  aspect-ratio: 16 / 9;
+}
+
+@media (max-width: 768px) {
+  .aspect-video {
+    aspect-ratio: 3 / 4;
+  }
+}

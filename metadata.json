@@ -1,0 +1,5 @@
+{
+  "name": "VisionAI Morph",
+  "description": "Transform your reality in real-time using AI and your camera.",
+  "requestFramePermissions": ["camera"]
+}
